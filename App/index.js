@@ -1,96 +1,168 @@
 // Filename: index.js
 // Combined code from all files
 
-import React, { useState, useEffect } from 'react';
-import { SafeAreaView, StyleSheet, Text, ActivityIndicator, View, FlatList, Image } from 'react-native';
-import * as Location from 'expo-location';
+import React, { useState, useEffect, useRef } from 'react';
+import { SafeAreaView, StyleSheet, View, Text, Dimensions, TouchableWithoutFeedback } from 'react-native';
 
-export default function App() {
-    const [weatherData, setWeatherData] = useState(null);
-    const [loading, setLoading] = useState(true);
+const { width, height } = Dimensions.get('window');
+const shipWidth = 50;
+const shipHeight = 20;
+const bulletWidth = 5;
+const bulletHeight = 10;
+const invaderWidth = 40;
+const invaderHeight = 20;
+
+const App = () => {
+    const [shipPosition, setShipPosition] = useState(width / 2 - shipWidth / 2);
+    const [bullets, setBullets] = useState([]);
+    const [invaders, setInvaders] = useState([]);
+    const [invadersDirection, setInvadersDirection] = useState('right');
+    const [gameOver, setGameOver] = useState(false);
+    const intervalRef = useRef();
 
     useEffect(() => {
-        (async () => {
-            let { status } = await Location.requestForegroundPermissionsAsync();
-            if (status !== 'granted') {
-                setLoading(false);
-                return;
-            }
-
-            let location = await Location.getCurrentPositionAsync({});
-            fetch(`https://api.open-meteo.com/v1/forecast?latitude=${location.coords.latitude}&longitude=${location.coords.longitude}&hourly=temperature_2m,weathercode,icon&timezone=auto`)
-                .then(response => response.json())
-                .then(data => {
-                    // Filter the data to get points every 3 hours
-                    const filteredData = data.hourly.time.map((time, index) => ({
-                        time,
-                        temperature: data.hourly.temperature_2m[index],
-                        weathercode: data.hourly.weathercode[index],
-                        icon: data.hourly.icon[index]
-                    })).filter((_, index) => index % 3 === 0); // Filter every 3 hours
-
-                    setWeatherData(filteredData);
-                    setLoading(false);
-                })
-                .catch(() => setLoading(false));
-        })();
+        spawnInvaders();
+        intervalRef.current = setInterval(gameLoop, 50);
+        return () => clearInterval(intervalRef.current);
     }, []);
 
-    if (loading) {
-        return (
-            <SafeAreaView style={styles.container}>
-                <ActivityIndicator size="large" color="#0000ff" />
-            </SafeAreaView>
-        );
-    }
+    const spawnInvaders = () => {
+        let newInvaders = [];
+        for (let i = 0; i < 5; i++) {
+            for (let j = 0; j < 3; j++) {
+                newInvaders.push({
+                    x: i * (invaderWidth + 10),
+                    y: j * (invaderHeight + 10),
+                });
+            }
+        }
+        setInvaders(newInvaders);
+    };
+
+    const gameLoop = () => {
+        moveBullets();
+        moveInvaders();
+        detectCollisions();
+    };
+
+    const moveBullets = () => {
+        setBullets(bullets.map(bullet => ({ ...bullet, y: bullet.y - bulletHeight })));
+    };
+
+    const moveInvaders = () => {
+        let direction = invadersDirection;
+        let dx = direction === 'right' ? 5 : -5;
+        const newInvaders = invaders.map(invader => {
+            if (invader.x + dx > width - invaderWidth || invader.x + dx < 0) {
+                direction = direction === 'right' ? 'left' : 'right';
+            }
+            return { x: invader.x + dx, y: invader.y };
+        });
+        setInvaders(newInvaders);
+        setInvadersDirection(direction);
+    };
+
+    const detectCollisions = () => {
+        const remainingInvaders = [];
+        const remainingBullets = [];
+        invaders.forEach(invader => {
+            let hit = false;
+            bullets.forEach(bullet => {
+                if (bullet.x > invader.x && bullet.x < invader.x + invaderWidth &&
+                    bullet.y > invader.y && bullet.y < invader.y + invaderHeight) {
+                    hit = true;
+                }
+                if (!hit) remainingBullets.push(bullet);
+            });
+            if (!hit) remainingInvaders.push(invader);
+        });
+        setInvaders(remainingInvaders);
+        setBullets(remainingBullets);
+
+        if (remainingInvaders.length === 0) {
+            setGameOver(true);
+            clearInterval(intervalRef.current);
+        }
+    };
+
+    const handleTouch = (event) => {
+        const touchX = event.nativeEvent.locationX;
+        if (touchX < width / 2) {
+            setShipPosition(shipPosition - 20);
+        } else {
+            setShipPosition(shipPosition + 20);
+        }
+    };
+
+    const handleShoot = () => {
+        setBullets([...bullets, { x: shipPosition + shipWidth / 2 - bulletWidth / 2, y: height - shipHeight }]);
+    };
 
     return (
-        <SafeAreaView style={styles.container}>
-            <Text style={styles.title}>Today's Weather (Every 3 Hours)</Text>
-            {weatherData ? (
-                <FlatList
-                    data={weatherData}
-                    keyExtractor={(item) => item.time}
-                    renderItem={({ item }) => (
-                        <View style={styles.weatherItem}>
-                            <Text>{new Date(item.time).toLocaleTimeString()}</Text>
-                            <Image
-                                style={styles.icon}
-                                source={{ uri: `https://openweathermap.org/img/w/${item.icon}.png` }}
-                            />
-                            <Text>{item.temperature}°C</Text>
-                        </View>
-                    )}
-                />
-            ) : (
-                <Text>No weather data available.</Text>
-            )}
-        </SafeAreaView>
+        < SafeAreaView style={styles.container} >
+            {gameOver ? <Text style={styles.gameOver}>You Win!</Text> : null}
+            <View style={styles.gameArea}>
+                {invaders.map((invader, index) => (
+                    <View key={index} style={[styles.invader, { left: invader.x, top: invader.y }]} />
+                ))}
+                <View style={[styles.ship, { left: shipPosition, bottom: 20 }]} />
+                {bullets.map((bullet, index) => (
+                    <View key={index} style={[styles.bullet, { left: bullet.x, top: bullet.y }]} />
+                ))}
+            </View>
+            <TouchableWithoutFeedback onPress={handleTouch} onLongPress={handleShoot}>
+                <View style={styles.controlArea}>
+                    <Text style={styles.instructions}>Tap left/right to move, hold to shoot</Text>
+                </View>
+            </TouchableWithoutFeedback>
+        </SafeAreaView >
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
+        justifyContent: 'flex-end',
+    },
+    gameArea: {
+        position: 'relative',
+        width: width,
+        height: height,
+    },
+    ship: {
+        position: 'absolute',
+        width: shipWidth,
+        height: shipHeight,
+        backgroundColor: 'blue',
+    },
+    bullet: {
+        position: 'absolute',
+        width: bulletWidth,
+        height: bulletHeight,
+        backgroundColor: 'red',
+    },
+    invader: {
+        position: 'absolute',
+        width: invaderWidth,
+        height: invaderHeight,
+        backgroundColor: 'green',
+    },
+    controlArea: {
+        height: 80,
+        backgroundColor: '#222',
         justifyContent: 'center',
         alignItems: 'center',
-        paddingTop: 30, // Space for the status bar
-        marginHorizontal: 20,
-        backgroundColor: '#f5fcff',
     },
-    title: {
-        fontSize: 24,
+    instructions: {
+        color: '#fff',
+    },
+    gameOver: {
+        position: 'absolute',
+        top: height / 2 - 50,
+        left: width / 2 - 50,
+        fontSize: 30,
         fontWeight: 'bold',
-        marginBottom: 20,
-    },
-    weatherItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginVertical: 10,
-    },
-    icon: {
-        width: 50,
-        height: 50,
-        marginHorizontal: 10,
     },
 });
+
+export default App;
